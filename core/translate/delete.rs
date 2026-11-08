@@ -228,6 +228,7 @@ pub fn prepare_delete_plan(
         namespace,
         indexed,
         plan_estimate: None,
+        row_filter: None,
     }];
     let mut table_references = TableReferences::new(joined_tables, vec![]);
 
@@ -262,7 +263,7 @@ pub fn prepare_delete_plan(
     )?;
     row_security::filter_rows(
         Command::Delete,
-        &table_references,
+        &mut table_references,
         &mut where_predicates,
         resolver,
     )?;
