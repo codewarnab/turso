@@ -287,6 +287,15 @@ impl Dialect for PostgresDialect {
         crate::classes::row_security_applies(schema, namespace, name, role)
     }
 
+    fn row_security_policies<'a>(
+        &self,
+        schema: &'a Schema,
+        namespace: NamespaceId,
+        name: &str,
+    ) -> &'a [turso_core::security::policy::RowPolicy] {
+        crate::classes::row_security_policies(schema, namespace, name)
+    }
+
     fn supports_roles(&self) -> bool {
         true
     }

@@ -20,12 +20,14 @@ pub(crate) use engine::EngineDialect;
 use crate::{
     namespace::NamespaceId,
     schema::{BTreeTable, RelationKind, Schema},
-    security::roles::RoleId,
+    security::{policy::RowPolicy, roles::RoleId},
     vdbe::builder::ProgramBuilder,
     Connection, Func, LimboError, OpenOptions, Result, Value,
 };
 use std::{any::Any, sync::Arc};
-use turso_parser::ast::{Cmd, CreateTableBody, Grantee, Privilege, QualifiedName, RoleSpec, Stmt};
+use turso_parser::ast::{
+    self, Cmd, CreateTableBody, Grantee, Privilege, QualifiedName, RoleSpec, Stmt,
+};
 
 /// Prefix the PostgreSQL frontend puts before the `CREATE TABLE` text it
 /// stores in `sqlite_schema`.
@@ -74,6 +76,20 @@ pub enum RelationChange {
         namespace: NamespaceId,
         name: String,
         enabled: bool,
+    },
+    /// `CREATE POLICY` on table `name`. Its expressions refer to the
+    /// table's columns by their unqualified names.
+    CreatePolicy {
+        namespace: NamespaceId,
+        name: String,
+        policy: Box<ast::CreatePolicy>,
+    },
+    /// `DROP POLICY policy_name ON name`.
+    DropPolicy {
+        namespace: NamespaceId,
+        name: String,
+        policy_name: String,
+        if_exists: bool,
     },
 }
 
@@ -306,8 +322,9 @@ pub trait Dialect: Send + Sync + 'static {
     /// comes with its automatic indexes in one call. Does nothing for a
     /// dialect without schema state of its own, except that such a dialect
     /// has no ownership, privileges or row-level security and refuses
-    /// `ALTER ... OWNER TO`, `ALTER SEQUENCE ... OWNED BY`, `GRANT` and
-    /// `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`.
+    /// `ALTER ... OWNER TO`, `ALTER SEQUENCE ... OWNED BY`, `GRANT`,
+    /// `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, `CREATE POLICY` and
+    /// `DROP POLICY`.
     fn translate_relation_changes(
         &self,
         program: &mut ProgramBuilder,
@@ -337,7 +354,9 @@ pub trait Dialect: Send + Sync + 'static {
                 RelationChange::Grant { .. } => {
                     return Err(LimboError::ParseError("GRANT is not supported".to_string()));
                 }
-                RelationChange::SetRowSecurity { .. } => {
+                RelationChange::SetRowSecurity { .. }
+                | RelationChange::CreatePolicy { .. }
+                | RelationChange::DropPolicy { .. } => {
                     return Err(LimboError::ParseError(
                         "row-level security is not supported".to_string(),
                     ));
@@ -411,6 +430,18 @@ pub trait Dialect: Send + Sync + 'static {
     ) -> bool {
         let _ = (schema, namespace, name, role);
         false
+    }
+
+    /// The policies of table `name` of `namespace`, for every role and
+    /// command. A dialect without row-level security has none.
+    fn row_security_policies<'a>(
+        &self,
+        schema: &'a Schema,
+        namespace: NamespaceId,
+        name: &str,
+    ) -> &'a [RowPolicy] {
+        let _ = (schema, namespace, name);
+        &[]
     }
 
     /// Whether `PRAGMA capture_data_changes_conn` may create its change
